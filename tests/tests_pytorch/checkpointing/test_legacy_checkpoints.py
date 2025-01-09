@@ -1,4 +1,4 @@
-# Copyright The PyTorch Lightning team.
+# Copyright The Lightning AI team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,39 +14,43 @@
 import glob
 import os
 import sys
-import threading
 from unittest.mock import patch
 
 import pytest
 import torch
 
-import pytorch_lightning as pl
-from pytorch_lightning import Callback, Trainer
+import lightning.pytorch as pl
+from lightning.pytorch import Callback, Trainer
 from tests_pytorch import _PATH_LEGACY
+from tests_pytorch.helpers.datamodules import ClassifDataModule
+from tests_pytorch.helpers.runif import RunIf
+from tests_pytorch.helpers.simple_models import ClassificationModel
+from tests_pytorch.helpers.threading import ThreadExceptionHandler
 
 LEGACY_CHECKPOINTS_PATH = os.path.join(_PATH_LEGACY, "checkpoints")
 CHECKPOINT_EXTENSION = ".ckpt"
 # load list of all back compatible versions
 with open(os.path.join(_PATH_LEGACY, "back-compatible-versions.txt")) as fp:
     LEGACY_BACK_COMPATIBLE_PL_VERSIONS = [ln.strip() for ln in fp.readlines()]
+# This shall be created for each CI run
+LEGACY_BACK_COMPATIBLE_PL_VERSIONS += ["local"]
 
 
 @pytest.mark.parametrize("pl_version", LEGACY_BACK_COMPATIBLE_PL_VERSIONS)
-def test_load_legacy_checkpoints(tmpdir, pl_version: str):
+@RunIf(sklearn=True)
+def test_load_legacy_checkpoints(tmp_path, pl_version: str):
     PATH_LEGACY = os.path.join(LEGACY_CHECKPOINTS_PATH, pl_version)
     with patch("sys.path", [PATH_LEGACY] + sys.path):
-        from simple_classif_training import ClassifDataModule, ClassificationModel
-
         path_ckpts = sorted(glob.glob(os.path.join(PATH_LEGACY, f"*{CHECKPOINT_EXTENSION}")))
         assert path_ckpts, f'No checkpoints found in folder "{PATH_LEGACY}"'
         path_ckpt = path_ckpts[-1]
 
-        model = ClassificationModel.load_from_checkpoint(path_ckpt)
-        trainer = Trainer(default_root_dir=str(tmpdir))
-        dm = ClassifDataModule()
+        model = ClassificationModel.load_from_checkpoint(path_ckpt, num_features=24)
+        trainer = Trainer(default_root_dir=tmp_path)
+        dm = ClassifDataModule(num_features=24, length=6000, batch_size=128, n_clusters_per_class=2, n_informative=8)
         res = trainer.test(model, datamodule=dm)
-        assert res[0]["test_loss"] <= 0.7
-        assert res[0]["test_acc"] >= 0.85
+        assert res[0]["test_loss"] <= 0.85, str(res[0]["test_loss"])
+        assert res[0]["test_acc"] >= 0.7, str(res[0]["test_acc"])
         print(res)
 
 
@@ -62,19 +66,24 @@ class LimitNbEpochs(Callback):
 
 
 @pytest.mark.parametrize("pl_version", LEGACY_BACK_COMPATIBLE_PL_VERSIONS)
-def test_legacy_ckpt_threading(tmpdir, pl_version: str):
+@RunIf(sklearn=True)
+def test_legacy_ckpt_threading(pl_version: str):
+    PATH_LEGACY = os.path.join(LEGACY_CHECKPOINTS_PATH, pl_version)
+    path_ckpts = sorted(glob.glob(os.path.join(PATH_LEGACY, f"*{CHECKPOINT_EXTENSION}")))
+    assert path_ckpts, f'No checkpoints found in folder "{PATH_LEGACY}"'
+    path_ckpt = path_ckpts[-1]
+
     def load_model():
         import torch
 
-        from pytorch_lightning.utilities.migration import pl_legacy_patch
+        from lightning.pytorch.utilities.migration import pl_legacy_patch
 
         with pl_legacy_patch():
-            _ = torch.load(PATH_LEGACY)
+            _ = torch.load(path_ckpt, weights_only=False)
 
-    PATH_LEGACY = os.path.join(LEGACY_CHECKPOINTS_PATH, pl_version)
     with patch("sys.path", [PATH_LEGACY] + sys.path):
-        t1 = threading.Thread(target=load_model)
-        t2 = threading.Thread(target=load_model)
+        t1 = ThreadExceptionHandler(target=load_model)
+        t2 = ThreadExceptionHandler(target=load_model)
 
         t1.start()
         t2.start()
@@ -84,24 +93,23 @@ def test_legacy_ckpt_threading(tmpdir, pl_version: str):
 
 
 @pytest.mark.parametrize("pl_version", LEGACY_BACK_COMPATIBLE_PL_VERSIONS)
-def test_resume_legacy_checkpoints(tmpdir, pl_version: str):
+@RunIf(sklearn=True)
+def test_resume_legacy_checkpoints(tmp_path, pl_version: str):
     PATH_LEGACY = os.path.join(LEGACY_CHECKPOINTS_PATH, pl_version)
     with patch("sys.path", [PATH_LEGACY] + sys.path):
-        from simple_classif_training import ClassifDataModule, ClassificationModel
-
         path_ckpts = sorted(glob.glob(os.path.join(PATH_LEGACY, f"*{CHECKPOINT_EXTENSION}")))
         assert path_ckpts, f'No checkpoints found in folder "{PATH_LEGACY}"'
         path_ckpt = path_ckpts[-1]
 
-        dm = ClassifDataModule()
-        model = ClassificationModel()
+        dm = ClassifDataModule(num_features=24, length=6000, batch_size=128, n_clusters_per_class=2, n_informative=8)
+        model = ClassificationModel(num_features=24)
         stop = LimitNbEpochs(1)
 
         trainer = Trainer(
-            default_root_dir=str(tmpdir),
+            default_root_dir=tmp_path,
             accelerator="auto",
             devices=1,
-            precision=(16 if torch.cuda.is_available() else 32),
+            precision=("16-mixed" if torch.cuda.is_available() else "32-true"),
             callbacks=[stop],
             max_epochs=21,
             accumulate_grad_batches=2,
@@ -109,5 +117,5 @@ def test_resume_legacy_checkpoints(tmpdir, pl_version: str):
         torch.backends.cudnn.deterministic = True
         trainer.fit(model, datamodule=dm, ckpt_path=path_ckpt)
         res = trainer.test(model, datamodule=dm)
-        assert res[0]["test_loss"] <= 0.7
-        assert res[0]["test_acc"] >= 0.85
+        assert res[0]["test_loss"] <= 0.85, str(res[0]["test_loss"])
+        assert res[0]["test_acc"] >= 0.7, str(res[0]["test_acc"])

@@ -1,33 +1,19 @@
-import logging
-import os
+import subprocess
 import sys
-from pathlib import Path
+from unittest import mock
+from unittest.mock import Mock
 
 import pytest
 from lightning_utilities.core.imports import RequirementCache
 
-from pytorch_lightning.strategies.launchers.subprocess_script import _HYDRA_AVAILABLE
+from lightning.pytorch.strategies.launchers.subprocess_script import _SubprocessScriptLauncher
 from tests_pytorch.helpers.runif import RunIf
 
-_HYDRA_WITH_RERUN = RequirementCache("hydra-core>=1.2")
 _HYDRA_WITH_RUN_PROCESS = RequirementCache("hydra-core>=1.0.7")
 
-if _HYDRA_AVAILABLE:
-    from omegaconf import OmegaConf
 if _HYDRA_WITH_RUN_PROCESS:
     from hydra.test_utils.test_utils import run_process
-
-
-# fixture to run hydra jobs in a clean temporary directory
-# Hydra creates its own output directories and logs
-@pytest.fixture
-def cleandir(tmp_path):
-    """Run function in a temporary directory."""
-    old_dir = os.getcwd()  # get current working directory (cwd)
-    os.chdir(tmp_path)  # change cwd to the temp-directory
-    yield tmp_path  # yields control to the test to be run
-    os.chdir(old_dir)
-    logging.shutdown()
+    from omegaconf import OmegaConf
 
 
 # Script to run from command line
@@ -36,8 +22,9 @@ import hydra
 import os
 import torch
 
-from pytorch_lightning import Trainer
-from pytorch_lightning.demos.boring_classes import BoringModel
+from lightning.fabric.utilities.distributed import _distributed_is_initialized
+from lightning.pytorch import Trainer
+from lightning.pytorch.demos.boring_classes import BoringModel
 
 class BoringModelGPU(BoringModel):
     def on_train_start(self) -> None:
@@ -51,7 +38,7 @@ def task_fn(cfg):
     trainer.fit(model)
     trainer.test(model)
 
-    if torch.distributed.is_initialized():
+    if _distributed_is_initialized():
         torch.distributed.destroy_process_group()
 
     os.environ.pop("LOCAL_RANK", None)
@@ -63,99 +50,54 @@ if __name__ == "__main__":
 
 @RunIf(min_cuda_gpus=2, skip_windows=True, standalone=True)
 @pytest.mark.skipif(not _HYDRA_WITH_RUN_PROCESS, reason=str(_HYDRA_WITH_RUN_PROCESS))
-@pytest.mark.parametrize("subdir", [None, "dksa", ".hello"])
-def test_ddp_with_hydra_runjob(cleandir, subdir):
+@pytest.mark.parametrize("subdir", [None, "null", "dksa", ".hello"])
+def test_ddp_with_hydra_runjob(subdir, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
     # Save script locally
     with open("temp.py", "w") as fn:
         fn.write(script)
 
     # Run CLI
     devices = 2
-    cmd = [sys.executable, "temp.py", f"+devices={devices}", '+strategy="ddp"']
+    run_dir = tmp_path / "hydra_output"
+    cmd = [sys.executable, "temp.py", f"+devices={devices}", '+strategy="ddp"', f"hydra.run.dir={run_dir}"]
     if subdir is not None:
         cmd += [f"hydra.output_subdir={subdir}"]
     run_process(cmd)
 
-    # Make sure config.yaml was created for additional
-    # processes.
-    logs = list(Path.cwd().glob("**/config.yaml"))
+    # Make sure no config.yaml was created for additional processes
+    saved_confs = list(run_dir.glob("**/config.yaml"))
+    assert len(saved_confs) == (0 if subdir == "null" else 1)  # Main process has config.yaml iff subdir!="null"
+
+    if saved_confs:  # Make sure the parameter was set and used
+        cfg = OmegaConf.load(saved_confs[0])
+        assert cfg.devices == devices
+
+    # Make sure PL spawned jobs that are logged by Hydra
+    logs = list(run_dir.glob("**/*.log"))
     assert len(logs) == devices
 
-    # Make sure the parameter was set and used
-    cfg = OmegaConf.load(logs[0])
-    assert cfg.devices == devices
 
-    # Make sure PL spawned a job that is logged by Hydra
-    logs = list(Path.cwd().glob("**/*.log"))
-    assert len(logs) == 1
+@mock.patch("lightning.fabric.strategies.launchers.subprocess_script._ChildProcessObserver")
+def test_kill(_):
+    launcher = _SubprocessScriptLauncher(Mock(), 1, 1)
+    proc0 = Mock(autospec=subprocess.Popen)
+    proc1 = Mock(autospec=subprocess.Popen)
+    launcher.procs = [proc0, proc1]
 
-
-@RunIf(min_cuda_gpus=2, skip_windows=True, standalone=True)
-@pytest.mark.skipif(not _HYDRA_WITH_RUN_PROCESS, reason=str(_HYDRA_WITH_RUN_PROCESS))
-@pytest.mark.parametrize("num_jobs", [1, 2])
-def test_ddp_with_hydra_multirunjob(cleandir, num_jobs):
-    # Save script locally
-    with open("temp.py", "w") as fn:
-        fn.write(script)
-
-    # create fake multirun params based on `num_jobs`
-    fake_param = "+foo=" + ",".join(str(i) for i in range(num_jobs))
-
-    # Run CLI
-    run_process([sys.executable, "temp.py", "+devices=2", '+strategy="ddp"', fake_param, "--multirun"])
-
-    # Make sure config.yaml was created for each job
-    configs = sorted(Path.cwd().glob("**/.pl_ddp_hydra_*/config.yaml"))
-    assert len(configs) == num_jobs
-
-    # Make sure the parameter was set and used for each job
-    for i, config in enumerate(configs):
-        cfg = OmegaConf.load(config)
-        local_rank = int(config.parent.parent.parts[-1])
-        assert cfg.devices == 2
-        assert cfg.foo == local_rank
-
-    logs = list(Path.cwd().glob("**/*.log"))
-    assert len(logs) == num_jobs
+    launcher.kill(15)
+    proc0.send_signal.assert_called_once_with(15)
+    proc1.send_signal.assert_called_once_with(15)
 
 
-yaml_file = """
-hydra:
-  callbacks:
-    save_job_info:
-      _target_: hydra.experimental.callbacks.PickleJobInfoCallback
-"""
+@mock.patch("lightning.fabric.strategies.launchers.subprocess_script.subprocess.Popen")
+@mock.patch("lightning.fabric.strategies.launchers.subprocess_script._ChildProcessObserver")
+def test_validate_cluster_environment_user_settings(*_):
+    """Test that the launcher calls into the cluster environment to validate the user settings."""
+    cluster_env = Mock(validate_settings=Mock(side_effect=RuntimeError("test")))
+    cluster_env.creates_processes_externally = True
+    launcher = _SubprocessScriptLauncher(cluster_env, num_processes=2, num_nodes=1)
 
-
-@RunIf(min_cuda_gpus=2, skip_windows=True, standalone=True)
-@pytest.mark.skipif(not _HYDRA_WITH_RERUN, reason=str(_HYDRA_WITH_RERUN))
-@pytest.mark.parametrize("num_jobs", [1, 2])
-def test_ddp_with_hydra_multirunjob_rerun(cleandir, num_jobs):
-    # Save script locally
-    with open("temp.py", "w") as fn:
-        fn.write(script)
-
-    with open("config.yaml", "w") as fn:
-        fn.write(yaml_file)
-
-    # create fake multirun params based on `num_jobs`
-    fake_param = "+foo=" + ",".join(str(i) for i in range(num_jobs))
-
-    # Run CLI
-    run_process(
-        [
-            sys.executable,
-            "temp.py",
-            "-cp",
-            ".",
-            "-cn",
-            "config.yaml",
-            "+devices=2",
-            '+strategy="ddp"',
-            fake_param,
-            "--multirun",
-        ]
-    )
-
-    pickles = sorted(Path.cwd().glob("**/.hydra/config.pickle"))
-    assert len(pickles) == num_jobs
+    with pytest.raises(RuntimeError, match="test"):
+        launcher.launch(Mock())

@@ -1,4 +1,4 @@
-# Copyright The PyTorch Lightning team.
+# Copyright The Lightning AI team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,24 +13,20 @@
 # limitations under the License.
 
 import os
+import re
 from unittest import mock
 
 import pytest
 import torch
+from torch import Tensor
 
-from pytorch_lightning import Trainer
-from pytorch_lightning.demos.boring_classes import BoringModel
-from pytorch_lightning.plugins import ApexMixedPrecisionPlugin, NativeMixedPrecisionPlugin
-from pytorch_lightning.utilities.exceptions import MisconfigurationException
-from tests_pytorch.conftest import mock_cuda_count
+from lightning.pytorch import Trainer
+from lightning.pytorch.demos.boring_classes import BoringModel
+from lightning.pytorch.plugins import MixedPrecision
 from tests_pytorch.helpers.runif import RunIf
 
 
-class MyNativeAMP(NativeMixedPrecisionPlugin):
-    pass
-
-
-class MyApexPlugin(ApexMixedPrecisionPlugin):
+class MyAMP(MixedPrecision):
     pass
 
 
@@ -48,24 +44,24 @@ class MyApexPlugin(ApexMixedPrecisionPlugin):
         "SLURM_LOCALID": "0",
     },
 )
-@pytest.mark.parametrize("strategy,devices", [("ddp", 2), ("ddp_spawn", 2)])
+@pytest.mark.parametrize(("strategy", "devices"), [("ddp", 2), ("ddp_spawn", 2)])
 @pytest.mark.parametrize(
-    "amp,custom_plugin,plugin_cls",
+    ("custom_plugin", "plugin_cls"),
     [
-        ("native", False, NativeMixedPrecisionPlugin),
-        ("native", True, MyNativeAMP),
-        pytest.param("apex", False, ApexMixedPrecisionPlugin, marks=RunIf(amp_apex=True)),
-        pytest.param("apex", True, MyApexPlugin, marks=RunIf(amp_apex=True)),
+        (False, MixedPrecision),
+        (True, MyAMP),
     ],
 )
-def test_amp_apex_ddp(cuda_count_2, strategy, devices, amp, custom_plugin, plugin_cls):
+def test_amp_ddp(cuda_count_2, strategy, devices, custom_plugin, plugin_cls):
     plugin = None
+    precision = None
     if custom_plugin:
-        plugin = plugin_cls(16, "cpu") if amp == "native" else plugin_cls()
+        plugin = plugin_cls("16-mixed", "cpu")
+    else:
+        precision = "16-mixed"
     trainer = Trainer(
         fast_dev_run=True,
-        precision=16,
-        amp_backend=amp,
+        precision=precision,
         accelerator="gpu",
         devices=devices,
         strategy=strategy,
@@ -118,17 +114,13 @@ class TestPrecisionModel(BoringModel):
         clip_val = self.trainer.gradient_clip_val
         torch.nn.utils.clip_grad_value_(self.clipped_parameters, clip_val)
 
-    def log_grad_norm(self, grad_norm_dict):
-        self.check_grads_unscaled()
-        assert len(grad_norm_dict)
-
     def configure_gradient_clipping(self, *args, **kwargs):
         # let lightning clip
         super().configure_gradient_clipping(*args, **kwargs)
         # check clipping worked as expected
         self.check_grads_clipped()
 
-    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_idx, closure, **_):
+    def optimizer_step(self, epoch, batch_idx, optimizer, closure, **_):
         # pass self as a kwarg
         optimizer.step(closure, pl_module=self)
 
@@ -138,20 +130,18 @@ class TestPrecisionModel(BoringModel):
 
 @RunIf(min_cuda_gpus=2)
 @pytest.mark.parametrize("accum", [1, 2])
-def test_amp_gradient_unscale(tmpdir, accum: int):
+def test_amp_gradient_unscale(tmp_path, accum: int):
     model = TestPrecisionModel()
 
     trainer = Trainer(
         max_epochs=2,
-        default_root_dir=tmpdir,
+        default_root_dir=tmp_path,
         limit_train_batches=2,
         limit_val_batches=0,
-        amp_backend="native",
         strategy="ddp_spawn",
         accelerator="gpu",
         devices=2,
-        precision=16,
-        track_grad_norm=2,
+        precision="16-mixed",
         # use a tiny value to make sure it works
         gradient_clip_val=1e-3,
         gradient_clip_algorithm="value",
@@ -163,25 +153,29 @@ def test_amp_gradient_unscale(tmpdir, accum: int):
 
 
 @RunIf(min_cuda_gpus=1)
-def test_amp_skip_optimizer(tmpdir):
+def test_amp_skip_optimizer(tmp_path):
     """Test that optimizers can be skipped when using amp."""
 
     class CustomBoringModel(BoringModel):
         def __init__(self):
             super().__init__()
+            self.automatic_optimization = False
             self.layer1 = torch.nn.Linear(32, 32)
             self.layer2 = torch.nn.Linear(32, 2)
 
-        def forward(self, x: torch.Tensor):
+        def forward(self, x: Tensor):
             x = self.layer1(x)
             x = self.layer2(x)
             return x
 
-        def training_step(self, batch, batch_idx, optimizer_idx):
-            if optimizer_idx == 1:
-                return None
+        def training_step(self, batch, batch_idx):
+            _, opt2 = self.optimizers()
             output = self(batch)
-            return self.loss(batch, output)
+            loss = self.loss(output)
+            opt2.zero_grad()
+            self.manual_backward(loss)
+            # only optimizer 2 steps
+            opt2.step()
 
         def configure_optimizers(self):
             return [
@@ -189,99 +183,39 @@ def test_amp_skip_optimizer(tmpdir):
                 torch.optim.SGD(self.layer2.parameters(), lr=0.1),
             ]
 
-    trainer = Trainer(
-        default_root_dir=tmpdir, accelerator="gpu", devices=1, fast_dev_run=1, amp_backend="native", precision=16
-    )
+    trainer = Trainer(default_root_dir=tmp_path, accelerator="gpu", devices=1, fast_dev_run=1, precision="16-mixed")
     model = CustomBoringModel()
     trainer.fit(model)
 
 
-@RunIf(min_cuda_gpus=2, amp_apex=True, standalone=True)
-@pytest.mark.parametrize("amp_level", ["O2"])
-def test_amp_apex_ddp_fit(amp_level, tmpdir):
-    class CustomBoringModel(BoringModel):
-        def training_step(self, batch, batch_idx):
-            assert self.layer.weight.dtype == torch.float16
-            assert self.trainer.precision_plugin._connected
-            return super().training_step(batch, batch_idx)
-
-    trainer = Trainer(
-        default_root_dir=tmpdir,
-        fast_dev_run=True,
-        precision=16,
-        amp_backend="apex",
-        accelerator="gpu",
-        devices=2,
-        strategy="ddp",
-        plugins=ApexMixedPrecisionPlugin(amp_level=amp_level),
-        enable_progress_bar=False,
-        enable_model_summary=False,
-    )
-    assert isinstance(trainer.precision_plugin, ApexMixedPrecisionPlugin)
-    model = CustomBoringModel()
-    trainer.fit(model)
-    trainer.test(model)
-
-
-@RunIf(min_cuda_gpus=2, amp_apex=True)
-@pytest.mark.parametrize("amp_level", ["O2"])
-def test_amp_apex_ddp_spawn_fit(amp_level, tmpdir):
-    trainer = Trainer(
-        default_root_dir=tmpdir,
-        fast_dev_run=True,
-        precision=16,
-        amp_backend="apex",
-        accelerator="gpu",
-        devices=2,
-        strategy="ddp_spawn",
-        plugins=ApexMixedPrecisionPlugin(amp_level=amp_level),
-    )
-    assert isinstance(trainer.precision_plugin, ApexMixedPrecisionPlugin)
-    model = BoringModel()
-    trainer.fit(model)
-
-
-@RunIf(min_torch="1.10")
-def test_cpu_amp_precision_context_manager(tmpdir):
+def test_cpu_amp_precision_context_manager():
     """Test to ensure that the context manager correctly is set to CPU + bfloat16."""
-    plugin = NativeMixedPrecisionPlugin("bf16", "cpu")
+    plugin = MixedPrecision("bf16-mixed", "cpu")
     assert plugin.device == "cpu"
     assert plugin.scaler is None
     context_manager = plugin.autocast_context_manager()
     assert isinstance(context_manager, torch.autocast)
-    # check with str due to a bug upstream: https://github.com/pytorch/pytorch/issues/65786
-    assert str(context_manager.fast_dtype) == str(torch.bfloat16)
+    assert context_manager.fast_dtype == torch.bfloat16
 
 
-def test_precision_selection_raises(monkeypatch):
+def test_amp_precision_plugin_parameter_validation():
+    MixedPrecision("16-mixed", "cpu")  # should not raise exception
+    MixedPrecision("bf16-mixed", "cpu")
+
     with pytest.raises(
-        MisconfigurationException, match=r"precision=16, amp_type='apex'\)` but apex AMP not supported on CPU"
+        ValueError,
+        match=re.escape("Passed `MixedPrecision(precision='16')`. Precision must be '16-mixed' or 'bf16-mixed'"),
     ):
-        Trainer(amp_backend="apex", precision=16)
+        MixedPrecision("16", "cpu")
 
-    import pytorch_lightning.plugins.precision.native_amp as amp
-
-    monkeypatch.setattr(amp, "_TORCH_GREATER_EQUAL_1_10", False)
-    with pytest.warns(
-        UserWarning, match=r"precision=16\)` but native AMP is not supported on CPU. Using `precision='bf16"
-    ), pytest.raises(MisconfigurationException, match="must install torch greater or equal to 1.10"):
-        Trainer(precision=16)
-
-    with pytest.raises(MisconfigurationException, match="must install torch greater or equal to 1.10"):
-        Trainer(precision="bf16")
-
-    with pytest.raises(MisconfigurationException, match=r"amp_type='apex', precision='bf16'\)` but it's not supported"):
-        Trainer(amp_backend="apex", precision="bf16")
-
-    mock_cuda_count(monkeypatch, 1)
-    with pytest.raises(MisconfigurationException, match="Sharded plugins are not supported with apex"):
-        with mock.patch("lightning_lite.accelerators.cuda.is_cuda_available", return_value=True):
-            Trainer(amp_backend="apex", precision=16, accelerator="gpu", devices=1, strategy="ddp_fully_sharded")
-
-    import pytorch_lightning.plugins.precision.apex_amp as apex
-
-    monkeypatch.setattr(apex, "_APEX_AVAILABLE", False)
-    with mock.patch("lightning_lite.accelerators.cuda.is_cuda_available", return_value=True), pytest.raises(
-        MisconfigurationException, match="asked for Apex AMP but `apex` is not installed"
+    with pytest.raises(
+        ValueError,
+        match=re.escape("Passed `MixedPrecision(precision=16)`. Precision must be '16-mixed' or 'bf16-mixed'"),
     ):
-        Trainer(amp_backend="apex", precision=16, accelerator="gpu", devices=1)
+        MixedPrecision(16, "cpu")
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape("Passed `MixedPrecision(precision='bf16')`. Precision must be '16-mixed' or 'bf16-mixed'"),
+    ):
+        MixedPrecision("bf16", "cpu")

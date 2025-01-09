@@ -1,4 +1,4 @@
-# Copyright The PyTorch Lightning team.
+# Copyright The Lightning AI team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,9 +16,11 @@ import os
 import random
 import time
 import urllib.request
-from typing import Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Optional
 
 import torch
+from torch import Tensor
 from torch.utils.data import Dataset
 
 
@@ -38,13 +40,6 @@ class MNIST(Dataset):
         download: If true, downloads the dataset from the internet and
             puts it in root directory. If dataset is already downloaded, it is not
             downloaded again.
-
-    Examples:
-        >>> dataset = MNIST(".", download=True)
-        >>> len(dataset)
-        60000
-        >>> torch.bincount(dataset.targets)
-        tensor([5923, 6742, 5958, 6131, 5842, 5421, 5918, 6265, 5851, 5949])
     """
 
     RESOURCES = (
@@ -69,7 +64,7 @@ class MNIST(Dataset):
         data_file = self.TRAIN_FILE_NAME if self.train else self.TEST_FILE_NAME
         self.data, self.targets = self._try_load(os.path.join(self.cached_folder_path, data_file))
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+    def __getitem__(self, idx: int) -> tuple[Tensor, int]:
         img = self.data[idx].float().unsqueeze(0)
         target = int(self.targets[idx])
 
@@ -102,7 +97,7 @@ class MNIST(Dataset):
         for url in self.RESOURCES:
             logging.info(f"Downloading {url}")
             fpath = os.path.join(data_folder, os.path.basename(url))
-            urllib.request.urlretrieve(url, fpath)
+            urllib.request.urlretrieve(url, fpath)  # noqa: S310
 
     @staticmethod
     def _try_load(path_data, trials: int = 30, delta: float = 1.0):
@@ -112,10 +107,10 @@ class MNIST(Dataset):
         assert os.path.isfile(path_data), f"missing file: {path_data}"
         for _ in range(trials):
             try:
-                res = torch.load(path_data)
+                res = torch.load(path_data, weights_only=True)
             # todo: specify the possible exception
-            except Exception as e:
-                exception = e
+            except Exception as ex:
+                exception = ex
                 time.sleep(delta * random.random())
             else:
                 break
@@ -125,7 +120,7 @@ class MNIST(Dataset):
         return res
 
     @staticmethod
-    def normalize_tensor(tensor: torch.Tensor, mean: float = 0.0, std: float = 1.0) -> torch.Tensor:
+    def normalize_tensor(tensor: Tensor, mean: float = 0.0, std: float = 1.0) -> Tensor:
         mean = torch.as_tensor(mean, dtype=tensor.dtype, device=tensor.device)
         std = torch.as_tensor(std, dtype=tensor.dtype, device=tensor.device)
         return tensor.sub(mean).div(std)
@@ -139,14 +134,6 @@ class TrialMNIST(MNIST):
         digits: list selected MNIST digits/classes
         kwargs: Same as MNIST
 
-    Examples:
-        >>> dataset = TrialMNIST(".", download=True)
-        >>> len(dataset)
-        300
-        >>> sorted(set([d.item() for d in dataset.targets]))
-        [0, 1, 2]
-        >>> torch.bincount(dataset.targets)
-        tensor([100, 100, 100])
     """
 
     def __init__(self, root: str, num_samples: int = 100, digits: Optional[Sequence] = (0, 1, 2), **kwargs):
@@ -160,7 +147,7 @@ class TrialMNIST(MNIST):
         super().__init__(root, normalize=(0.5, 1.0), **kwargs)
 
     @staticmethod
-    def _prepare_subset(full_data: torch.Tensor, full_targets: torch.Tensor, num_samples: int, digits: Sequence):
+    def _prepare_subset(full_data: Tensor, full_targets: Tensor, num_samples: int, digits: Sequence):
         classes = {d: 0 for d in digits}
         indexes = []
         for idx, target in enumerate(full_targets):

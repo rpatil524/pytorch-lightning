@@ -1,15 +1,10 @@
-.. PyTorch-Lightning documentation master file, created by
-   sphinx-quickstart on Fri Nov 15 07:48:22 2019.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
 Welcome to ⚡ PyTorch Lightning
 ===============================
 
 .. twocolumns::
    :left:
       .. image:: https://pl-bolts-doc-images.s3.us-east-2.amazonaws.com/mov.gif
-         :alt: Animation showing how to convert a standard training loop to a Lightning loop
+         :alt: Animation showing how to convert standard training code to Lightning
    :right:
       PyTorch Lightning is the deep learning framework for professional AI researchers and machine learning engineers who need maximal flexibility without sacrificing performance at scale.
       Lightning evolves with you as your projects go from idea to paper/production.
@@ -20,10 +15,6 @@ Welcome to ⚡ PyTorch Lightning
       <div class='col-md-6'>
       </div>
       <div class='col-md-6'>
-
-.. join_slack::
-   :align: center
-   :margin: 0
 
 .. raw:: html
 
@@ -49,7 +40,7 @@ Pip users
 
 .. code-block:: bash
 
-    pip install pytorch-lightning
+    pip install lightning
 
 .. raw:: html
 
@@ -60,7 +51,7 @@ Conda users
 
 .. code-block:: bash
 
-    conda install pytorch-lightning -c conda-forge
+    conda install lightning -c conda-forge
 
 .. raw:: html
 
@@ -68,6 +59,8 @@ Conda users
    </div>
 
 Or read the `advanced install guide <starter/installation.html>`_
+
+You can find the list of supported PyTorch versions in our :ref:`compatibility matrix <versioning:Compatibility matrix>`.
 
 .. raw:: html
 
@@ -154,10 +147,11 @@ Current Lightning Users
 .. toctree::
    :maxdepth: 1
    :name: start
-   :caption: Get Started
+   :caption: Home
 
    starter/introduction
-   starter/installation
+   Install <starter/installation>
+   upgrade/migration_guide
 
 
 .. toctree::
@@ -171,7 +165,7 @@ Current Lightning Users
    levels/expert
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :name: pl_docs
    :caption: Core API
 
@@ -179,117 +173,28 @@ Current Lightning Users
    common/trainer
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :name: api
-   :caption: API Reference
+   :caption: Optional API
 
    api_references
 
 .. toctree::
    :maxdepth: 1
-   :name: Common Workflows
-   :caption: Common Workflows
+   :name: More
+   :caption: More
 
-   Avoid overfitting <common/evaluation>
-   model/build_model.rst
-   common/hyperparameters
-   common/progress_bar
-   deploy/production
-   advanced/training_tricks
-   cli/lightning_cli
-   tuning/profiler
-   Manage experiments <visualize/logging_intermediate>
-   Organize existing PyTorch into Lightning <starter/converting>
-   clouds/cluster
-   Save and load model progress <common/checkpointing>
-   Save memory with half-precision <common/precision>
-   Training over the internet <strategies/hivemind>
-   advanced/model_parallel
-   clouds/cloud_training
-   Train on single or multiple GPUs <accelerators/gpu>
-   Train on single or multiple HPUs <accelerators/hpu>
-   Train on single or multiple IPUs <accelerators/ipu>
-   Train on single or multiple TPUs <accelerators/tpu>
-   Train on MPS <accelerators/mps>
-   Use a pretrained model <advanced/pretrained>
-   model/own_your_loop
+   Community <community/index>
+   Examples <tutorials>
+   Glossary <glossary/index>
+   How to <common/index>
 
-.. toctree::
-   :maxdepth: 1
-   :name: Glossary
-   :caption: Glossary
-
-   Accelerators <extensions/accelerator>
-   Callback <extensions/callbacks>
-   Checkpointing <common/checkpointing>
-   Cluster <clouds/cluster>
-   Cloud checkpoint <common/checkpointing_advanced>
-   Console Logging <common/console_logs>
-   Debugging <debug/debugging>
-   Early stopping <common/early_stopping>
-   Experiment manager (Logger) <visualize/experiment_managers>
-   Fault tolerant training  <clouds/fault_tolerant_training>
-   Finetuning <advanced/finetuning>
-   Flash <https://lightning-flash.readthedocs.io/en/stable/>
-   Grid AI <clouds/cloud_training>
-   GPU <accelerators/gpu>
-   Half precision <common/precision>
-   HPU <accelerators/hpu>
-   Inference <deploy/production_intermediate>
-   IPU <accelerators/ipu>
-   Lightning CLI <cli/lightning_cli>
-   Lightning Lite <model/build_model_expert>
-   LightningDataModule <data/datamodule>
-   LightningModule <common/lightning_module>
-   Lightning Transformers <https://pytorch-lightning.readthedocs.io/en/stable/ecosystem/transformers.html>
-   Log <visualize/loggers>
-   Loops <extensions/loops>
-   TPU <accelerators/tpu>
-   Metrics <https://torchmetrics.readthedocs.io/en/stable/>
-   Model <model/build_model.rst>
-   Model Parallel <advanced/model_parallel>
-   Collaborative Training <strategies/hivemind>
-   Plugins <extensions/plugins>
-   Progress bar <common/progress_bar>
-   Production <deploy/production_advanced>
-   Predict <deploy/production_basic>
-   Pretrained models <advanced/pretrained>
-   Profiler <tuning/profiler>
-   Pruning and Quantization <advanced/pruning_quantization>
-   Remote filesystem and FSSPEC <common/remote_fs>
-   Strategy <extensions/strategy>
-   Strategy registry <advanced/strategy_registry>
-   Style guide <starter/style_guide>
-   Sweep <clouds/run_intermediate>
-   SWA <advanced/training_tricks>
-   SLURM <clouds/cluster_advanced>
-   Transfer learning <advanced/transfer_learning>
-   Trainer <common/trainer>
-   Torch distributed <clouds/cluster_intermediate_2>
-
-.. toctree::
-   :maxdepth: 1
-   :name: Hands-on Examples
-   :caption: Hands-on Examples
-   :glob:
-
-   notebooks/**/*
-   PyTorch Lightning 101 class <https://www.youtube.com/playlist?list=PLaMu-SDt_RB5NUm67hU2pdE75j6KaIOv2>
-   From PyTorch to PyTorch Lightning [Blog] <https://towardsdatascience.com/from-pytorch-to-pytorch-lightning-a-gentle-introduction-b371b7caaf09>
-   From PyTorch to PyTorch Lightning [Video] <https://www.youtube.com/watch?v=QHww1JH7IDU>
-
-.. toctree::
-   :maxdepth: 1
-   :name: Community
-   :caption: Community
-
-   generated/CODE_OF_CONDUCT.md
-   generated/CONTRIBUTING.md
-   generated/BECOMING_A_CORE_CONTRIBUTOR.md
-   governance
-   versioning
-   generated/CHANGELOG.md
 
 .. raw:: html
 
    </div>
+
+.. PyTorch-Lightning documentation master file, created by
+   sphinx-quickstart on Fri Nov 15 07:48:22 2019.
+   You can adapt this file completely to your liking, but it should at least
+   contain the root `toctree` directive.

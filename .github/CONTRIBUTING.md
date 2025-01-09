@@ -121,11 +121,11 @@ To build the documentation locally, simply execute the following commands from p
 
 All added or edited code shall be the own original work of the particular contributor.
 If you use some third-party implementation, all such blocks/functions/modules shall be properly referred and if possible also agreed by code's author. For example - `This code is inspired from http://...`.
-In case you adding new dependencies, make sure that they are compatible with the actual PyTorch Lightning license (ie. dependencies should be _at least_ as permissive as the PyTorch Lightning license).
+In case you are adding new dependencies, make sure that they are compatible with the actual PyTorch Lightning license (i.e. dependencies should be _at least_ as permissive as the PyTorch Lightning license).
 
 ### Coding Style
 
-1. Use f-strings for output formation (except logging when we stay with lazy `logging.info("Hello %s!", name)`.
+1. Use f-strings for output formation (except logging when we stay with lazy `logging.info("Hello %s!", name)`).
 1. You can use [pre-commit](https://pre-commit.com/) to make sure your code style is correct.
 
 ### Documentation
@@ -182,7 +182,7 @@ We welcome any useful contribution! For your convenience here's a recommended wo
 1. Use tags in PR name for the following cases:
 
    - **\[blocked by #<number>\]** if your work is dependent on other PRs.
-   - **\[wip\]** when you start to re-edit your work, mark it so no one will accidentally merge it in meantime.
+   - **[wip]** when you start to re-edit your work, mark it so no one will accidentally merge it in meantime.
 
 ### Question & Answer
 
@@ -199,7 +199,7 @@ We recommend you follow this convention `<type>/<issue-id>_<short-name>` where t
 
 We recommend creating a PR in a separate branch other than `master`, especially if you plan to submit several changes and do not want to wait until the first one is resolved (we can work on them in parallel).
 
-First, make sure you have set [upstream](https://help.github.com/en/github/collaborating-with-issues-and-pull-requests/configuring-a-remote-for-a-fork) by running:
+First, make sure you have set [upstream](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/configuring-a-remote-repository-for-a-fork) by running:
 
 ```bash
 git remote add upstream https://github.com/Lightning-AI/lightning.git
@@ -234,14 +234,15 @@ Here are tutorials:
 
 Here is the process to create a new test
 
-- 0. Optional: Follow tutorials !
-- 1. Find a file in tests/ which match what you want to test. If none, create one.
-- 2. Use this template to get started !
+- 0. Optional: Follow tutorials!
+- 1. Find a file in tests/ which matches what you want to test. If none, create one.
+- 2. Use this template to get started!
 - 3. Use **BoringModel and derivates to test out your code**.
 
 ```python
 # TEST SHOULD BE IN YOUR FILE: tests/.../test_file.py
 # TEST CODE TEMPLATE
+
 
 # [OPTIONAL] pytest decorator
 # @RunIf(min_cuda_gpus=1)
@@ -298,7 +299,7 @@ and the last true master commit is `ccc111` and your first commit is `mmm222`.
   # when all done, push back to the open PR
   git push -f
   ```
-- **Rebasing way**, see more about [rebase onto usage](https://womanonrails.com/git-rebase-onto)
+- **Rebasing way**, see more about [rebase onto usage](https://www.atlassian.com/git/tutorials/rewriting-history/git-rebase)
   ```bash
   git checkout my-branch
   # rebase your commits on the correct branch
